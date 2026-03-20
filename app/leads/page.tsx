@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 
 interface Lead {
@@ -15,6 +15,9 @@ interface Lead {
   contact_name: string;
   contact_email: string;
   created_at: string;
+  email_status: string;
+  email_sent_at: string | null;
+  replied_at: string | null;
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -26,12 +29,30 @@ const STATUS_COLORS: Record<string, string> = {
   Lost: 'bg-red-100 text-red-600',
 };
 
+const EMAIL_STATUS_STYLES: Record<string, { label: string; className: string }> = {
+  not_sent: { label: 'Not emailed', className: 'bg-gray-50 text-gray-400 border-gray-200' },
+  sent:     { label: 'Emailed',     className: 'bg-blue-50 text-blue-600 border-blue-200' },
+  replied:  { label: 'Replied',     className: 'bg-green-50 text-green-700 border-green-200' },
+  bounced:  { label: 'Bounced',     className: 'bg-red-50 text-red-600 border-red-200' },
+};
+
 const STATUSES = ['Lead', 'Contacted', 'Replied', 'Negotiating', 'Closed', 'Lost'];
 
 function ScoreBadge({ score }: { score: number }) {
   const color = score >= 70 ? 'bg-green-100 text-green-700' : score >= 50 ? 'bg-yellow-100 text-yellow-700' : 'bg-red-100 text-red-600';
   return <span className={`text-xs font-bold px-2 py-0.5 rounded ${color}`}>{score}</span>;
 }
+
+function EmailBadge({ status }: { status: string }) {
+  const style = EMAIL_STATUS_STYLES[status] ?? EMAIL_STATUS_STYLES.not_sent;
+  return (
+    <span className={`text-xs px-2 py-0.5 rounded-full border font-medium ${style.className}`}>
+      {style.label}
+    </span>
+  );
+}
+
+const AUTO_REFRESH_MS = 5 * 60 * 1000; // 5 minutes
 
 export default function PipelinePage() {
   const [leads, setLeads] = useState<Lead[]>([]);
@@ -40,9 +61,25 @@ export default function PipelinePage() {
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState('');
 
-  useEffect(() => {
-    fetch('/api/leads').then(r => r.json()).then(d => { setLeads(d); setLoading(false); });
+  const fetchLeads = useCallback(() => {
+    return fetch('/api/leads').then(r => r.json()).then(d => setLeads(d));
   }, []);
+
+  useEffect(() => {
+    fetchLeads().finally(() => setLoading(false));
+
+    // Auto-refresh email statuses every 5 minutes
+    const interval = setInterval(async () => {
+      try {
+        await fetch('/api/instantly/refresh-status', { method: 'POST' });
+        await fetchLeads();
+      } catch {
+        // Silent — don't disrupt the user
+      }
+    }, AUTO_REFRESH_MS);
+
+    return () => clearInterval(interval);
+  }, [fetchLeads]);
 
   async function syncInstantly() {
     setSyncing(true);
@@ -53,8 +90,8 @@ export default function PipelinePage() {
       if (data.error) {
         setSyncMsg(`Error: ${data.error}`);
       } else {
-        setSyncMsg(`Synced! ${data.imported} new leads imported.`);
-        fetch('/api/leads').then(r => r.json()).then(d => setLeads(d));
+        setSyncMsg(`Synced! ${data.imported} new, ${data.updated} updated.`);
+        await fetchLeads();
       }
     } catch {
       setSyncMsg('Sync failed — check your connection.');
@@ -80,7 +117,7 @@ export default function PipelinePage() {
       <div className="flex items-center justify-between mb-5">
         <div>
           <h1 className="text-2xl font-bold">Pipeline</h1>
-          <p className="text-sm text-gray-500 mt-0.5">{leads.length} leads total</p>
+          <p className="text-sm text-gray-500 mt-0.5">{leads.length} leads total · email status auto-refreshes every 5 min</p>
         </div>
         <div className="flex items-center gap-2">
           <button onClick={syncInstantly} disabled={syncing}
@@ -130,11 +167,22 @@ export default function PipelinePage() {
                     <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${STATUS_COLORS[lead.status]}`}>
                       {lead.status}
                     </span>
+                    <EmailBadge status={lead.email_status ?? 'not_sent'} />
                   </div>
                   <div className="text-xs text-gray-400 mt-1 space-x-3">
                     {lead.contact_name && <span>{lead.contact_name}</span>}
                     {lead.country && <span>{lead.country}</span>}
                     {lead.platform && <span>{lead.platform}</span>}
+                    {lead.replied_at && (
+                      <span className="text-green-600 font-medium">
+                        Replied {new Date(lead.replied_at).toLocaleDateString('en-GB')}
+                      </span>
+                    )}
+                    {!lead.replied_at && lead.email_sent_at && (
+                      <span>
+                        Emailed {new Date(lead.email_sent_at).toLocaleDateString('en-GB')}
+                      </span>
+                    )}
                   </div>
                 </div>
                 <div className="text-right shrink-0">

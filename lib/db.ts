@@ -37,7 +37,11 @@ function initSchema(db: Database.Database) {
       pricing_tiers TEXT DEFAULT '[]',
       creator_matches TEXT DEFAULT '[]',
       created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now'))
+      updated_at TEXT DEFAULT (datetime('now')),
+      instantly_lead_id TEXT,
+      email_status TEXT DEFAULT 'not_sent',
+      email_sent_at TEXT,
+      replied_at TEXT
     );
 
     CREATE TABLE IF NOT EXISTS creators (
@@ -51,7 +55,38 @@ function initSchema(db: Database.Database) {
       rate_per_post INTEGER DEFAULT 0,
       audience_uk_pct INTEGER DEFAULT 70
     );
+
+    CREATE TABLE IF NOT EXISTS tiktok_ads (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      brand_name TEXT NOT NULL,
+      creator_name TEXT DEFAULT '',
+      tiktok_url TEXT DEFAULT '',
+      video_filename TEXT DEFAULT '',
+      campaign_date TEXT DEFAULT '',
+      views INTEGER DEFAULT 0,
+      likes INTEGER DEFAULT 0,
+      comments INTEGER DEFAULT 0,
+      shares INTEGER DEFAULT 0,
+      saves INTEGER DEFAULT 0,
+      reach INTEGER DEFAULT 0,
+      impressions INTEGER DEFAULT 0,
+      profile_visits INTEGER DEFAULT 0,
+      follows INTEGER DEFAULT 0,
+      ad_spend INTEGER DEFAULT 0,
+      clicks INTEGER DEFAULT 0,
+      niche TEXT DEFAULT '',
+      notes TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now'))
+    );
   `);
+
+  // Migrate existing DBs — add email tracking columns if missing
+  const leadCols = (db.prepare("PRAGMA table_info(leads)").all() as { name: string }[]).map(c => c.name);
+  if (!leadCols.includes('instantly_lead_id')) db.exec("ALTER TABLE leads ADD COLUMN instantly_lead_id TEXT");
+  if (!leadCols.includes('email_status')) db.exec("ALTER TABLE leads ADD COLUMN email_status TEXT DEFAULT 'not_sent'");
+  if (!leadCols.includes('email_sent_at')) db.exec("ALTER TABLE leads ADD COLUMN email_sent_at TEXT");
+  if (!leadCols.includes('replied_at')) db.exec("ALTER TABLE leads ADD COLUMN replied_at TEXT");
 
   // Seed creators if empty
   const count = (db.prepare('SELECT COUNT(*) as c FROM creators').get() as { c: number }).c;
