@@ -37,10 +37,30 @@ export default function PipelinePage() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [filter, setFilter] = useState('All');
   const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  const [syncMsg, setSyncMsg] = useState('');
 
   useEffect(() => {
     fetch('/api/leads').then(r => r.json()).then(d => { setLeads(d); setLoading(false); });
   }, []);
+
+  async function syncInstantly() {
+    setSyncing(true);
+    setSyncMsg('');
+    try {
+      const res = await fetch('/api/instantly/sync', { method: 'POST' });
+      const data = await res.json();
+      if (data.error) {
+        setSyncMsg(`Error: ${data.error}`);
+      } else {
+        setSyncMsg(`Synced! ${data.imported} new leads imported.`);
+        fetch('/api/leads').then(r => r.json()).then(d => setLeads(d));
+      }
+    } catch {
+      setSyncMsg('Sync failed — check your connection.');
+    }
+    setSyncing(false);
+  }
 
   async function updateStatus(id: number, status: string) {
     await fetch(`/api/leads/${id}`, {
@@ -62,11 +82,22 @@ export default function PipelinePage() {
           <h1 className="text-2xl font-bold">Pipeline</h1>
           <p className="text-sm text-gray-500 mt-0.5">{leads.length} leads total</p>
         </div>
-        <Link href="/leads/new"
-          className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors">
-          + Add Lead
-        </Link>
+        <div className="flex items-center gap-2">
+          <button onClick={syncInstantly} disabled={syncing}
+            className="bg-white border border-gray-200 text-gray-700 px-4 py-2 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors disabled:opacity-50">
+            {syncing ? 'Syncing...' : 'Sync Instantly'}
+          </button>
+          <Link href="/leads/new"
+            className="bg-indigo-600 text-white px-4 py-2 rounded-lg text-sm font-medium hover:bg-indigo-700 transition-colors">
+            + Add Lead
+          </Link>
+        </div>
       </div>
+      {syncMsg && (
+        <div className="mb-4 text-sm px-3 py-2 rounded-lg bg-green-50 text-green-700 border border-green-200">
+          {syncMsg}
+        </div>
+      )}
 
       {/* Status filter */}
       <div className="flex flex-wrap gap-2 mb-5">
