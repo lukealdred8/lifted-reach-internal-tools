@@ -48,15 +48,16 @@ async function fetchAllLeads(apiKey: string): Promise<InstantlyLead[]> {
   let nextStartingAfter: string | null = null;
 
   do {
-    const url = new URL(`${INSTANTLY_API}/leads`);
-    url.searchParams.set('limit', '100');
-    if (nextStartingAfter) url.searchParams.set('starting_after', nextStartingAfter);
+    const body: Record<string, unknown> = { limit: 100 };
+    if (nextStartingAfter) body.starting_after = nextStartingAfter;
 
-    const res = await fetch(url.toString(), {
+    const res = await fetch(`${INSTANTLY_API}/leads/list`, {
+      method: 'POST',
       headers: {
         'Authorization': `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
       },
+      body: JSON.stringify(body),
     });
 
     if (!res.ok) {
