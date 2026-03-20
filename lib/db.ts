@@ -51,6 +51,30 @@ function initSchema(db: Database.Database) {
       rate_per_post INTEGER DEFAULT 0,
       audience_uk_pct INTEGER DEFAULT 70
     );
+
+    CREATE TABLE IF NOT EXISTS tiktok_ads (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      brand_name TEXT NOT NULL,
+      creator_name TEXT DEFAULT '',
+      tiktok_url TEXT DEFAULT '',
+      video_filename TEXT DEFAULT '',
+      campaign_date TEXT DEFAULT '',
+      views INTEGER DEFAULT 0,
+      likes INTEGER DEFAULT 0,
+      comments INTEGER DEFAULT 0,
+      shares INTEGER DEFAULT 0,
+      saves INTEGER DEFAULT 0,
+      reach INTEGER DEFAULT 0,
+      impressions INTEGER DEFAULT 0,
+      profile_visits INTEGER DEFAULT 0,
+      follows INTEGER DEFAULT 0,
+      ad_spend INTEGER DEFAULT 0,
+      clicks INTEGER DEFAULT 0,
+      niche TEXT DEFAULT '',
+      notes TEXT DEFAULT '',
+      created_at TEXT DEFAULT (datetime('now'))
+    );
   `);
 
   // Seed creators if empty
