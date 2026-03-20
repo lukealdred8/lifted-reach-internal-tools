@@ -37,7 +37,11 @@ function initSchema(db: Database.Database) {
       pricing_tiers TEXT DEFAULT '[]',
       creator_matches TEXT DEFAULT '[]',
       created_at TEXT DEFAULT (datetime('now')),
-      updated_at TEXT DEFAULT (datetime('now'))
+      updated_at TEXT DEFAULT (datetime('now')),
+      instantly_lead_id TEXT,
+      email_status TEXT DEFAULT 'not_sent',
+      email_sent_at TEXT,
+      replied_at TEXT
     );
 
     CREATE TABLE IF NOT EXISTS creators (
@@ -76,6 +80,13 @@ function initSchema(db: Database.Database) {
       created_at TEXT DEFAULT (datetime('now'))
     );
   `);
+
+  // Migrate existing DBs — add email tracking columns if missing
+  const leadCols = (db.prepare("PRAGMA table_info(leads)").all() as { name: string }[]).map(c => c.name);
+  if (!leadCols.includes('instantly_lead_id')) db.exec("ALTER TABLE leads ADD COLUMN instantly_lead_id TEXT");
+  if (!leadCols.includes('email_status')) db.exec("ALTER TABLE leads ADD COLUMN email_status TEXT DEFAULT 'not_sent'");
+  if (!leadCols.includes('email_sent_at')) db.exec("ALTER TABLE leads ADD COLUMN email_sent_at TEXT");
+  if (!leadCols.includes('replied_at')) db.exec("ALTER TABLE leads ADD COLUMN replied_at TEXT");
 
   // Seed creators if empty
   const count = (db.prepare('SELECT COUNT(*) as c FROM creators').get() as { c: number }).c;

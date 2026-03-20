@@ -13,16 +13,38 @@ interface InstantlyLead {
   website?: string;
   country?: string;
   custom_variables?: Record<string, string>;
+  // Email status fields from Instantly
+  status?: string;          // lead status in campaign (e.g. 'active', 'completed', 'interested')
+  is_replied?: boolean;
+  is_bounced?: boolean;
+  sent_count?: number;      // number of emails sent to this lead
+  email_sent_at?: string;
+  replied_at?: string;
 }
 
-export async function POST() {
-  const apiKey = process.env.INSTANTLY_API_KEY;
-  if (!apiKey) {
-    return NextResponse.json({ error: 'INSTANTLY_API_KEY not set' }, { status: 500 });
+function deriveEmailStatus(lead: InstantlyLead): {
+  email_status: string;
+  email_sent_at: string | null;
+  replied_at: string | null;
+} {
+  if (lead.is_replied) {
+    return {
+      email_status: 'replied',
+      email_sent_at: lead.email_sent_at ?? null,
+      replied_at: lead.replied_at ?? null,
+    };
   }
+  if (lead.is_bounced) {
+    return { email_status: 'bounced', email_sent_at: lead.email_sent_at ?? null, replied_at: null };
+  }
+  if ((lead.sent_count ?? 0) > 0 || (lead.status && lead.status !== 'active' && lead.status !== 'not_contacted')) {
+    return { email_status: 'sent', email_sent_at: lead.email_sent_at ?? null, replied_at: null };
+  }
+  return { email_status: 'not_sent', email_sent_at: null, replied_at: null };
+}
 
-  // Fetch leads from Instantly
-  let instantly_leads: InstantlyLead[] = [];
+async function fetchAllLeads(apiKey: string): Promise<InstantlyLead[]> {
+  let leads: InstantlyLead[] = [];
   let nextStartingAfter: string | null = null;
 
   do {
@@ -39,29 +61,71 @@ export async function POST() {
 
     if (!res.ok) {
       const text = await res.text();
-      return NextResponse.json({ error: `Instantly API error: ${res.status} ${text}` }, { status: 502 });
+      throw new Error(`Instantly API error: ${res.status} ${text}`);
     }
 
     const data = await res.json();
     const items: InstantlyLead[] = data.items ?? data.leads ?? data ?? [];
-    instantly_leads = instantly_leads.concat(items);
+    leads = leads.concat(items);
     nextStartingAfter = data.next_starting_after ?? null;
   } while (nextStartingAfter);
+
+  return leads;
+}
+
+export async function POST() {
+  const apiKey = process.env.INSTANTLY_API_KEY;
+  if (!apiKey) {
+    return NextResponse.json({ error: 'INSTANTLY_API_KEY not set' }, { status: 500 });
+  }
+
+  let instantly_leads: InstantlyLead[];
+  try {
+    instantly_leads = await fetchAllLeads(apiKey);
+  } catch (err) {
+    return NextResponse.json({ error: String(err) }, { status: 502 });
+  }
 
   const db = getDb();
   const creators = db.prepare('SELECT * FROM creators').all() as Creator[];
 
   let imported = 0;
+  let updated = 0;
   let skipped = 0;
 
   for (const lead of instantly_leads) {
     const email = lead.email?.trim().toLowerCase();
     if (!email) { skipped++; continue; }
 
-    // Skip if already imported
-    const existing = db.prepare('SELECT id FROM leads WHERE contact_email = ?').get(email);
-    if (existing) { skipped++; continue; }
+    const emailStatus = deriveEmailStatus(lead);
 
+    // Check if lead already exists (by email or by instantly_lead_id)
+    const existing = db.prepare(
+      'SELECT id FROM leads WHERE contact_email = ? OR instantly_lead_id = ?'
+    ).get(email, lead.id) as { id: number } | undefined;
+
+    if (existing) {
+      // Update email status for existing lead
+      db.prepare(`
+        UPDATE leads
+        SET email_status = ?,
+            email_sent_at = COALESCE(?, email_sent_at),
+            replied_at = COALESCE(?, replied_at),
+            instantly_lead_id = COALESCE(instantly_lead_id, ?),
+            updated_at = datetime('now')
+        WHERE id = ?
+      `).run(
+        emailStatus.email_status,
+        emailStatus.email_sent_at,
+        emailStatus.replied_at,
+        lead.id,
+        existing.id,
+      );
+      updated++;
+      continue;
+    }
+
+    // New lead — import and score
     const brand_name = lead.company_name || email.split('@')[1]?.split('.')[0] || 'Unknown';
     const contact_name = [lead.first_name, lead.last_name].filter(Boolean).join(' ') || '';
     const website = lead.website || '';
@@ -75,9 +139,13 @@ export async function POST() {
     const matched = matchCreators(creators, platform, notes, scoreResult.brand_fit);
 
     db.prepare(`
-      INSERT INTO leads (brand_name, website, contact_name, contact_email, country, platform, notes,
-        score, score_breakdown, estimated_deal_size, close_probability, expected_value, pricing_tiers, creator_matches)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO leads (
+        brand_name, website, contact_name, contact_email, country, platform, notes,
+        score, score_breakdown, estimated_deal_size, close_probability, expected_value,
+        pricing_tiers, creator_matches,
+        instantly_lead_id, email_status, email_sent_at, replied_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       brand_name, website, contact_name, email,
       country, platform, notes,
@@ -88,10 +156,14 @@ export async function POST() {
       deal.expected_value,
       JSON.stringify(tiers),
       JSON.stringify(matched),
+      lead.id,
+      emailStatus.email_status,
+      emailStatus.email_sent_at,
+      emailStatus.replied_at,
     );
 
     imported++;
   }
 
-  return NextResponse.json({ imported, skipped, total: instantly_leads.length });
+  return NextResponse.json({ imported, updated, skipped, total: instantly_leads.length });
 }
