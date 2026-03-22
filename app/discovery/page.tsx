@@ -25,6 +25,32 @@ interface TikTokCreator {
   verified: boolean;
 }
 
+interface SearchResult {
+  name: string;
+  handle: string;
+  bio: string;
+  location: string;
+  age: number;
+  gender: string;
+  followers: number;
+  avg_views: number;
+  avg_likes: number;
+  avg_comments: number;
+  engagement_rate: number;
+  niches: string[];
+  audience_age_18_24: number;
+  audience_age_25_34: number;
+  audience_female_pct: number;
+  audience_uk_pct: number;
+  audience_us_pct: number;
+  rate_per_post: number;
+  tiktok_url: string;
+  verified: boolean;
+  avatarUrl?: string;
+  following?: number;
+  videoCount?: number;
+}
+
 const ALL_NICHES = [
   'beauty', 'comedy', 'culture', 'fashion', 'finance', 'fitness',
   'food', 'gaming', 'home', 'lifestyle', 'luxury', 'makeup',
@@ -94,6 +120,14 @@ export default function DiscoveryPage() {
   const [saving, setSaving] = useState(false);
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
   const [showFilters, setShowFilters] = useState(true);
+
+  // TikTok live search
+  const [tikTokQuery, setTikTokQuery] = useState('');
+  const [tikTokResults, setTikTokResults] = useState<SearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState('');
+  const [importing, setImporting] = useState<Record<string, boolean>>({});
+  const [imported, setImported] = useState<Record<string, boolean>>({});
 
   // Filters
   const [search, setSearch] = useState('');
@@ -172,6 +206,47 @@ export default function DiscoveryPage() {
     setMaxAge('');
     setMinUkAudience('');
     setSortBy('followers');
+  }
+
+  async function handleTikTokSearch(e?: React.FormEvent) {
+    e?.preventDefault();
+    if (!tikTokQuery.trim() || searching) return;
+    setSearching(true);
+    setSearchError('');
+    setTikTokResults([]);
+    setImported({});
+    try {
+      const res = await fetch('/api/discovery/search', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: tikTokQuery.trim(), maxResults: 20 }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Search failed');
+      setTikTokResults(data);
+      if (data.length === 0) setSearchError('No creators found for that search. Try a different keyword or hashtag.');
+    } catch (err: unknown) {
+      setSearchError(err instanceof Error ? err.message : 'Search failed');
+    } finally {
+      setSearching(false);
+    }
+  }
+
+  async function handleImport(result: SearchResult) {
+    const key = result.handle;
+    setImporting(prev => ({ ...prev, [key]: true }));
+    try {
+      const res = await fetch('/api/discovery', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(result),
+      });
+      const created = await res.json();
+      setCreators(prev => [created, ...prev]);
+      setImported(prev => ({ ...prev, [key]: true }));
+    } finally {
+      setImporting(prev => ({ ...prev, [key]: false }));
+    }
   }
 
   function openAdd() {
@@ -287,7 +362,100 @@ export default function DiscoveryPage() {
         </div>
       </div>
 
-      {/* Search bar */}
+      {/* TikTok Live Search */}
+      <div className="bg-black rounded-xl p-4 mb-5">
+        <div className="flex items-center gap-2 mb-3">
+          <svg className="w-5 h-5 text-white shrink-0" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M19.59 6.69a4.83 4.83 0 01-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 01-2.88 2.5 2.89 2.89 0 01-2.89-2.89 2.89 2.89 0 012.89-2.89c.28 0 .54.04.79.1V9.01a6.33 6.33 0 00-.79-.05 6.34 6.34 0 00-6.34 6.34 6.34 6.34 0 006.34 6.34 6.34 6.34 0 006.33-6.34V8.75a8.16 8.16 0 004.77 1.52V6.82a4.85 4.85 0 01-1-.13z" />
+          </svg>
+          <span className="text-white font-semibold text-sm">Search TikTok Live</span>
+          <span className="text-gray-400 text-xs ml-1">— find real creators via Apify</span>
+        </div>
+        <form onSubmit={handleTikTokSearch} className="flex gap-2">
+          <input
+            value={tikTokQuery}
+            onChange={e => setTikTokQuery(e.target.value)}
+            placeholder="e.g. fitness uk, beauty london, fashion haul, #gymtok"
+            className="flex-1 bg-white/10 text-white placeholder-gray-500 border border-white/20 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-white/40"
+          />
+          <button
+            type="submit"
+            disabled={!tikTokQuery.trim() || searching}
+            className="bg-white text-black px-4 py-2 rounded-lg text-sm font-semibold hover:bg-gray-100 transition-colors disabled:opacity-40 shrink-0"
+          >
+            {searching ? 'Searching…' : 'Search'}
+          </button>
+        </form>
+
+        {searching && (
+          <p className="text-gray-400 text-xs mt-3 animate-pulse">
+            Searching TikTok via Apify — this takes 20–60 seconds…
+          </p>
+        )}
+
+        {searchError && (
+          <p className="text-red-400 text-xs mt-3">{searchError}</p>
+        )}
+
+        {tikTokResults.length > 0 && (
+          <div className="mt-4">
+            <p className="text-gray-400 text-xs mb-3">{tikTokResults.length} creators found — click Import to add to your database</p>
+            <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+              {tikTokResults.map(r => {
+                const key = r.handle;
+                const isImported = imported[key];
+                const isImporting = importing[key];
+                const alreadySaved = creators.some(c => c.handle === r.handle);
+                return (
+                  <div key={key} className="bg-white/5 border border-white/10 rounded-lg px-3 py-2.5 flex items-center gap-3">
+                    {r.avatarUrl ? (
+                      <img src={r.avatarUrl} alt={r.name} className="w-9 h-9 rounded-full object-cover shrink-0 bg-gray-700" />
+                    ) : (
+                      <div className="w-9 h-9 rounded-full bg-gray-700 shrink-0 flex items-center justify-center text-gray-400 text-sm font-bold">
+                        {(r.name || r.handle).charAt(0).toUpperCase()}
+                      </div>
+                    )}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <p className="text-white text-sm font-medium truncate">{r.name || r.handle}</p>
+                        {r.verified && (
+                          <svg className="w-3.5 h-3.5 text-blue-400 shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                        )}
+                      </div>
+                      <p className="text-gray-400 text-xs truncate">{r.handle}</p>
+                      {r.bio && <p className="text-gray-500 text-xs truncate mt-0.5">{r.bio}</p>}
+                    </div>
+                    <div className="text-right shrink-0 hidden sm:block">
+                      <p className="text-white text-xs font-semibold">{fmt(r.followers)}</p>
+                      <p className="text-gray-500 text-xs">followers</p>
+                      {r.engagement_rate > 0 && (
+                        <p className="text-green-400 text-xs">{r.engagement_rate.toFixed(1)}% eng</p>
+                      )}
+                    </div>
+                    <div className="shrink-0 ml-2">
+                      {alreadySaved || isImported ? (
+                        <span className="text-xs text-green-400 font-medium">✓ Saved</span>
+                      ) : (
+                        <button
+                          onClick={() => handleImport(r)}
+                          disabled={isImporting}
+                          className="bg-white text-black text-xs font-semibold px-3 py-1.5 rounded-lg hover:bg-gray-200 transition-colors disabled:opacity-50"
+                        >
+                          {isImporting ? '…' : 'Import'}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Search bar (filter existing database) */}
       <div className="relative mb-4">
         <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -295,7 +463,7 @@ export default function DiscoveryPage() {
         <input
           value={search}
           onChange={e => setSearch(e.target.value)}
-          placeholder="Search by name, handle, bio, or niche..."
+          placeholder="Filter saved creators by name, handle, bio, or niche..."
           className="w-full pl-9 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400 bg-white"
         />
         {search && (
